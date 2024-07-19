@@ -106,6 +106,8 @@ export class InputsController {
   private inputInterval: NodeJS.Timeout[] = new Array();
   private touchControls: TouchControl;
 
+  private heldInputs: { [key: string]: true | undefined } = {};
+
   /**
      * Initializes a new instance of the game control system, setting up initial state and configurations.
      *
@@ -366,22 +368,32 @@ export class InputsController {
     this.lastSource = "keyboard";
     this.ensureKeyboardIsInit();
     const buttonDown = getButtonWithKeycode(this.getActiveConfig(Device.KEYBOARD), event.keyCode);
+
     if (buttonDown !== undefined) {
-      if (this.buttonLock.includes(buttonDown)) {
+      if (this.heldInputs[buttonDown]) {
         return;
       }
+
+      this.heldInputs[buttonDown] = true;
+
       this.events.emit("input_down", {
         controller_type: "keyboard",
         button: buttonDown,
       });
+
       clearInterval(this.inputInterval[buttonDown]);
+
       this.inputInterval[buttonDown] = setInterval(() => {
+        if (!this.heldInputs[buttonDown]) {
+          clearInterval(this.inputInterval[buttonDown]);
+          console.log("cleared!");
+        }
+
         this.events.emit("input_down", {
           controller_type: "keyboard",
           button: buttonDown,
         });
       }, repeatInputDelayMillis);
-      this.buttonLock.push(buttonDown);
     }
   }
 
@@ -393,13 +405,15 @@ export class InputsController {
   keyboardKeyUp(event): void {
     this.lastSource = "keyboard";
     const buttonUp = getButtonWithKeycode(this.getActiveConfig(Device.KEYBOARD), event.keyCode);
+
     if (buttonUp !== undefined) {
+
       this.events.emit("input_up", {
         controller_type: "keyboard",
         button: buttonUp,
       });
-      const index = this.buttonLock.indexOf(buttonUp);
-      this.buttonLock.splice(index, 1);
+
+      delete this.heldInputs[buttonUp];
       clearInterval(this.inputInterval[buttonUp]);
     }
   }
@@ -430,25 +444,24 @@ export class InputsController {
     const activeConfig = this.getActiveConfig(Device.GAMEPAD);
     const buttonDown = activeConfig && getButtonWithKeycode(activeConfig, button.index);
     if (buttonDown !== undefined) {
-      if (this.buttonLock.includes(buttonDown)) {
-        return;
-      }
+      clearInterval(this.inputInterval[buttonDown]);
+
       this.events.emit("input_down", {
         controller_type: "gamepad",
         button: buttonDown,
       });
-      clearInterval(this.inputInterval[buttonDown]);
+
       this.inputInterval[buttonDown] = setInterval(() => {
-        if (!this.buttonLock.includes(buttonDown)) {
+        if (!button.pressed) {
           clearInterval(this.inputInterval[buttonDown]);
           return;
         }
+
         this.events.emit("input_down", {
           controller_type: "gamepad",
           button: buttonDown,
         });
       }, repeatInputDelayMillis);
-      this.buttonLock.push(buttonDown);
     }
   }
 
@@ -475,8 +488,7 @@ export class InputsController {
         controller_type: "gamepad",
         button: buttonUp,
       });
-      const index = this.buttonLock.indexOf(buttonUp);
-      this.buttonLock.splice(index, 1);
+
       clearInterval(this.inputInterval[buttonUp]);
     }
   }
@@ -526,7 +538,7 @@ export class InputsController {
     for (const key of Object.keys(this.inputInterval)) {
       clearInterval(this.inputInterval[key]);
     }
-    this.buttonLock = [];
+    this.heldInputs = {};
   }
 
   /**
