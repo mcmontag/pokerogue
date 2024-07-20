@@ -106,7 +106,8 @@ export class InputsController {
   private inputInterval: NodeJS.Timeout[] = new Array();
   private touchControls: TouchControl;
 
-  private heldInputs: { [key: string]: true | undefined } = {};
+  private keys: { [keyCode: number]: Phaser.Input.Keyboard.Key } = {};
+  private lastPresses: { [keyCode: number]: number } = {};
 
   /**
      * Initializes a new instance of the game control system, setting up initial state and configurations.
@@ -360,7 +361,8 @@ export class InputsController {
   }
 
   /**
-     * Handles the keydown event for the keyboard.
+     * Handles the keydown event for the keyboard. Throttles repeated inputs while holding
+     * down the key.
      *
      * @param event The keyboard event.
      */
@@ -370,35 +372,30 @@ export class InputsController {
     const buttonDown = getButtonWithKeycode(this.getActiveConfig(Device.KEYBOARD), event.keyCode);
 
     if (buttonDown !== undefined) {
-      if (this.heldInputs[buttonDown]) {
+      // create a Key object the first time a key is pressed
+      if (!this.keys[event.keyCode]) {
+        this.keys[event.keyCode] = new Phaser.Input.Keyboard.Key(this.scene.input.keyboard, event.keyCode);
+        this.keys[event.keyCode].emitOnRepeat = true;
+      }
+
+      // throttle repeated input, which can vary depending on hardware/OS
+      if (this.lastPresses[event.keyCode] && +new Date() - this.lastPresses[event.keyCode] < repeatInputDelayMillis) {
         return;
       }
 
-      this.heldInputs[buttonDown] = true;
+      this.lastPresses[event.keyCode] = +new Date();
 
       this.events.emit("input_down", {
         controller_type: "keyboard",
         button: buttonDown,
       });
-
-      clearInterval(this.inputInterval[buttonDown]);
-
-      this.inputInterval[buttonDown] = setInterval(() => {
-        if (!this.heldInputs[buttonDown]) {
-          clearInterval(this.inputInterval[buttonDown]);
-          console.log("cleared!");
-        }
-
-        this.events.emit("input_down", {
-          controller_type: "keyboard",
-          button: buttonDown,
-        });
-      }, repeatInputDelayMillis);
     }
   }
 
   /**
-     * Handles the keyup event for the keyboard.
+     * Handles the keyup event for the keyboard. Clears the last press timestamp
+     * of the key, so that rapid presses can be handled as distinct keydown events
+     * rather than repeated inputs from a held-down key.
      *
      * @param event The keyboard event.
      */
@@ -407,13 +404,13 @@ export class InputsController {
     const buttonUp = getButtonWithKeycode(this.getActiveConfig(Device.KEYBOARD), event.keyCode);
 
     if (buttonUp !== undefined) {
+      delete this.lastPresses[event.keyCode];
 
       this.events.emit("input_up", {
         controller_type: "keyboard",
         button: buttonUp,
       });
 
-      delete this.heldInputs[buttonUp];
       clearInterval(this.inputInterval[buttonUp]);
     }
   }
@@ -421,7 +418,8 @@ export class InputsController {
   /**
      * Handles button press events on a gamepad. This method sets the gamepad as chosen on the first input if no gamepad is currently chosen.
      * It checks if gamepad support is enabled and if the event comes from the chosen gamepad. If so, it maps the button press to a specific
-     * action using a custom configuration, emits an event for the button press, and records the time of the action.
+     * action using a custom configuration, emits an event for the button press, and triggers an interval that will poll the button and
+     * repeat inputs as long as it's held down.
      *
      * @param pad The gamepad on which the button was pressed.
      * @param button The specific button that was pressed.
@@ -451,6 +449,7 @@ export class InputsController {
         button: buttonDown,
       });
 
+      // gamepad events aren't repeated, so we have to use an interval
       this.inputInterval[buttonDown] = setInterval(() => {
         if (!button.pressed) {
           clearInterval(this.inputInterval[buttonDown]);
@@ -538,7 +537,8 @@ export class InputsController {
     for (const key of Object.keys(this.inputInterval)) {
       clearInterval(this.inputInterval[key]);
     }
-    this.heldInputs = {};
+    this.keys = {};
+    this.lastPresses = {};
   }
 
   /**
